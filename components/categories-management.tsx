@@ -1,28 +1,28 @@
 "use client"
 
-import { useState, useMemo } from "react"
-import { useStock, type Category } from "@/contexts/stock-context"
+import { useState, useMemo, useEffect } from "react"
+import { useCategories } from "@/hooks/useCategories"
 import { useNotification } from "@/contexts/notification-context"
+import type { Category } from "@/lib/types"
 import { Card } from "./ui/card"
 import { Button } from "./ui/button"
 import { Input } from "./ui/input"
 import { Label } from "./ui/label"
 import { Textarea } from "./ui/textarea"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "./ui/dialog"
-import { PlusIcon, PencilIcon, TrashIcon, SearchIcon, TagIcon } from "lucide-react"
+import { Plus, Pencil, Trash2, Search, Loader2 } from "lucide-react"
 import { Badge } from "./ui/badge"
-import { PackageIcon } from "lucide-react"
 import { Pagination } from "./pagination"
 
 export function CategoriesManagement() {
-  const { categories, items, addCategory, updateCategory, deleteCategory } = useStock()
+  const { categories, isLoading, fetchCategories, createCategory, updateCategory, deleteCategory } = useCategories()
   const { addNotification } = useNotification()
   const [searchQuery, setSearchQuery] = useState("")
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false)
   const [editingCategory, setEditingCategory] = useState<Category | null>(null)
-
+  const [isSubmitting, setIsSubmitting] = useState(false)
   const [currentPage, setCurrentPage] = useState(1)
-  const [pageSize, setPageSize] = useState(12)
+  const [pageSize] = useState(12)
 
   const [formData, setFormData] = useState({
     name: "",
@@ -31,6 +31,10 @@ export function CategoriesManagement() {
     icon: "",
     color: "#6b7280",
   })
+
+  useEffect(() => {
+    fetchCategories()
+  }, [fetchCategories])
 
   const filteredCategories = useMemo(() => {
     return categories.filter(
@@ -46,11 +50,6 @@ export function CategoriesManagement() {
     return filteredCategories.slice(startIndex, startIndex + pageSize)
   }, [filteredCategories, currentPage, pageSize])
 
-  const handleFilterChange = (value: string) => {
-    setSearchQuery(value)
-    setCurrentPage(1)
-  }
-
   const resetForm = () => {
     setFormData({
       name: "",
@@ -59,68 +58,91 @@ export function CategoriesManagement() {
       icon: "",
       color: "#6b7280",
     })
-  }
-
-  const handleAdd = () => {
-    if (!formData.name || !formData.slug) return
-
-    addCategory({
-      name: formData.name,
-      slug: formData.slug,
-      description: formData.description,
-      icon: formData.icon,
-      color: formData.color,
-    })
-
-    addNotification({
-      type: "success",
-      title: "Catégorie ajoutée",
-      message: `${formData.name} a été ajoutée avec succès`,
-    })
-
-    resetForm()
-    setIsAddDialogOpen(false)
-  }
-
-  const handleEdit = () => {
-    if (!editingCategory || !formData.name || !formData.slug) return
-
-    updateCategory(editingCategory.id, {
-      name: formData.name,
-      slug: formData.slug,
-      description: formData.description,
-      icon: formData.icon,
-      color: formData.color,
-    })
-
-    addNotification({
-      type: "success",
-      title: "Catégorie modifiée",
-      message: `${formData.name} a été modifiée avec succès`,
-    })
-
-    resetForm()
     setEditingCategory(null)
   }
 
-  const handleDelete = (id: string, categoryName: string) => {
-    const itemCount = items.filter((item) => item.category === categories.find((c) => c.id === id)?.slug).length
-
-    if (
-      confirm(
-        itemCount > 0
-          ? `Êtes-vous sûr de vouloir supprimer "${categoryName}" ? ${itemCount} article(s) seront également supprimé(s).`
-          : `Êtes-vous sûr de vouloir supprimer "${categoryName}" ?`,
-      )
-    ) {
-      deleteCategory(id)
+  const handleAdd = async () => {
+    if (!formData.name || !formData.slug) {
       addNotification({
-        type: itemCount > 0 ? "warning" : "success",
-        title: "Catégorie supprimée",
-        message:
-          itemCount > 0
-            ? `${categoryName} et ${itemCount} article(s) ont été supprimés`
-            : `${categoryName} a été supprimée avec succès`,
+        type: "error",
+        message: "Veuillez remplir tous les champs obligatoires",
+      })
+      return
+    }
+
+    setIsSubmitting(true)
+    try {
+      await createCategory({
+        name: formData.name,
+        slug: formData.slug,
+        description: formData.description,
+        icon: formData.icon,
+        color: formData.color,
+      })
+
+      addNotification({
+        type: "success",
+        message: `${formData.name} a été ajoutée avec succès`,
+      })
+
+      resetForm()
+      setIsAddDialogOpen(false)
+      await fetchCategories()
+    } catch (err: any) {
+      addNotification({
+        type: "error",
+        message: err?.response?.data?.message || "Erreur lors de l'ajout",
+      })
+    } finally {
+      setIsSubmitting(false)
+    }
+  }
+
+  const handleEdit = async () => {
+    if (!editingCategory || !formData.name || !formData.slug) return
+
+    setIsSubmitting(true)
+    try {
+      await updateCategory(editingCategory._id, {
+        name: formData.name,
+        slug: formData.slug,
+        description: formData.description,
+        icon: formData.icon,
+        color: formData.color,
+      })
+      addNotification({
+        type: "success",
+        message: `${formData.name} a été modifiée avec succès`,
+      })
+
+      resetForm()
+      setEditingCategory(null)
+      setIsAddDialogOpen(false)
+      await fetchCategories()
+    } catch (err: any) {
+      addNotification({
+        type: "error",
+        message: err?.response?.data?.message || "Erreur lors de la modification",
+      })
+    } finally {
+      setIsSubmitting(false)
+    }
+  }
+
+  const handleDelete = async (id: string, categoryName: string) => {
+    if (!confirm(`Êtes-vous sûr de vouloir supprimer "${categoryName}"?`)) return
+
+    try {
+      await deleteCategory(id)
+      addNotification({
+        type: "success",
+        message: `${categoryName} a été supprimée avec succès`,
+      })
+      await fetchCategories()
+    } catch (err: any) {
+      addNotification({
+        type: "error",
+        message: err?.response?.data?.message || "Erreur lors de la suppression",
       })
     }
   }
@@ -134,10 +156,7 @@ export function CategoriesManagement() {
       color: category.color || "#6b7280",
     })
     setEditingCategory(category)
-  }
-
-  const getItemCount = (categorySlug: string) => {
-    return items.filter((item) => item.category === categorySlug).length
+    setIsAddDialogOpen(true)
   }
 
   return (
@@ -152,7 +171,7 @@ export function CategoriesManagement() {
         <Dialog open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen}>
           <DialogTrigger asChild>
             <Button onClick={resetForm}>
-              <PlusIcon className="mr-2 h-4 w-4" />
+              <Plus className="mr-2 h-4 w-4" />
               Nouvelle Catégorie
             </Button>
           </DialogTrigger>
@@ -228,11 +247,14 @@ export function CategoriesManagement() {
       {/* Search */}
       <Card className="p-4">
         <div className="relative">
-          <SearchIcon className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <Input
             placeholder="Rechercher une catégorie..."
             value={searchQuery}
-            onChange={(e) => handleFilterChange(e.target.value)}
+            onChange={(e) => {
+              setSearchQuery(e.target.value)
+              setCurrentPage(1)
+            }}
             className="pl-9"
           />
         </div>
@@ -241,7 +263,7 @@ export function CategoriesManagement() {
       {/* Categories Grid */}
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
         {paginatedCategories.map((category) => (
-          <Card key={category.id} className="p-5">
+          <Card key={category._id} className="p-5">
             <div className="space-y-3">
               <div className="flex items-start justify-between">
                 <div className="flex items-center gap-3">
@@ -250,12 +272,12 @@ export function CategoriesManagement() {
                 </div>
                 <div className="flex gap-1">
                   <Dialog
-                    open={editingCategory?.id === category.id}
+                    open={editingCategory?._id === category._id}
                     onOpenChange={(open) => !open && setEditingCategory(null)}
                   >
                     <DialogTrigger asChild>
                       <Button variant="ghost" size="sm" onClick={() => openEditDialog(category)}>
-                        <PencilIcon className="h-4 w-4" />
+                        <Pencil className="h-4 w-4" />
                       </Button>
                     </DialogTrigger>
                     <DialogContent>
@@ -320,8 +342,8 @@ export function CategoriesManagement() {
                       </div>
                     </DialogContent>
                   </Dialog>
-                  <Button variant="ghost" size="sm" onClick={() => handleDelete(category.id, category.name)}>
-                    <TrashIcon className="h-4 w-4 text-destructive" />
+                  <Button variant="ghost" size="sm" onClick={() => handleDelete(category._id, category.name)}>
+                    <Trash2 className="h-4 w-4 text-destructive" />
                   </Button>
                 </div>
               </div>
@@ -333,8 +355,12 @@ export function CategoriesManagement() {
 
               <div className="flex items-center gap-2">
                 <Badge variant="secondary" className="gap-1">
-                  <PackageIcon className="h-3 w-3" />
-                  {getItemCount(category.slug)} article(s)
+                  {category.isActive ? (
+                    <span className="h-2 w-2 rounded-full bg-green-500" />
+                  ) : (
+                    <span className="h-2 w-2 rounded-full bg-gray-500" />
+                  )}
+                  {category.isActive ? "Actif" : "Inactif"}
                 </Badge>
               </div>
 
@@ -349,27 +375,37 @@ export function CategoriesManagement() {
       {filteredCategories.length === 0 && (
         <Card className="p-12">
           <div className="flex flex-col items-center justify-center text-center">
-            <TagIcon className="h-12 w-12 text-muted-foreground opacity-50" />
+            <div className="h-12 w-12 text-muted-foreground opacity-50 mb-4">📂</div>
             <p className="mt-4 text-lg font-medium text-foreground">Aucune catégorie trouvée</p>
             <p className="text-sm text-muted-foreground">Essayez de modifier votre recherche</p>
           </div>
         </Card>
       )}
 
-      {filteredCategories.length > 0 && (
-        <Card className="p-4">
-          <Pagination
-            currentPage={currentPage}
-            totalPages={totalPages}
-            pageSize={pageSize}
-            totalItems={filteredCategories.length}
-            onPageChange={setCurrentPage}
-            onPageSizeChange={(size) => {
-              setPageSize(size)
-              setCurrentPage(1)
-            }}
-          />
-        </Card>
+      {filteredCategories.length > 0 && totalPages > 1 && (
+        <div className="flex items-center justify-between">
+          <p className="text-sm text-muted-foreground">
+            Page {currentPage} sur {totalPages}
+          </p>
+          <div className="flex gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+              disabled={currentPage === 1}
+            >
+              Précédent
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+              disabled={currentPage === totalPages}
+            >
+              Suivant
+            </Button>
+          </div>
+        </div>
       )}
     </div>
   )
