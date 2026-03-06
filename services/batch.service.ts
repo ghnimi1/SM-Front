@@ -1,7 +1,8 @@
 import api from "@/lib/api"
 
 export interface Batch {
-  id: string
+  id?: string
+  _id?: string
   productId: string
   batchNumber: string
   quantity: number

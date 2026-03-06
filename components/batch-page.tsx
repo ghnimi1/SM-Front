@@ -191,7 +191,7 @@ export function BatchPage({ productId, onBack, isUserRole = false }: BatchPagePr
         expirationAfterOpening.setDate(expirationAfterOpening.getDate() + product.data.shelfLifeAfterOpening)
       }
 
-      await batchService.open(selectedBatchForOpening.id, {
+      await batchService.open(selectedBatchForOpening._id!, {
         openingDate,
         expirationAfterOpening: expirationAfterOpening.toISOString().split("T")[0],
       })
@@ -219,7 +219,7 @@ export function BatchPage({ productId, onBack, isUserRole = false }: BatchPagePr
   const handleDeleteBatch = async (batch: Batch) => {
     if (confirm(`Êtes-vous sûr de vouloir supprimer le lot ${batch.batchNumber} ?`)) {
       try {
-        await batchService.delete(batch.id)
+        await batchService.delete(batch._id!)
 
         // Reload batches from backend
         const updatedBatches = await batchService.getByProduct(productId)
@@ -254,7 +254,7 @@ export function BatchPage({ productId, onBack, isUserRole = false }: BatchPagePr
     }
 
     try {
-      await batchService.update(selectedBatchForUpdate.id, {
+      await batchService.update(selectedBatchForUpdate._id!, {
         quantity: updateQuantity,
       })
 
