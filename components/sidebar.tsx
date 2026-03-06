@@ -14,7 +14,7 @@ import {
   GiftIcon,
 } from "lucide-react"
 
-type NavItem = "dashboard" | "articles" | "categories" | "suppliers" | "menu" | "clients" | "rewards"
+type NavItem = "dashboard" | "articles" | "categories" | "suppliers" | "menu" | "clients" | "rewards" | "batches"
 
 interface SidebarProps {
   currentView: NavItem
