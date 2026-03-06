@@ -1,8 +1,11 @@
 "use client"
 
-import { useState, useMemo } from "react"
-import { useStock, type Batch } from "@/contexts/stock-context"
+import { useState, useMemo, useEffect } from "react"
+import { useStock } from "@/contexts/stock-context"
 import { useNotification } from "@/contexts/notification-context"
+import batchService, { type Batch } from "@/services/batch.service"
+import { ProductService } from "@/services/product.service"
+import type { ProductResponse } from "@/lib/types"
 import { Card } from "./ui/card"
 import { Button } from "./ui/button"
 import { Badge } from "./ui/badge"
@@ -29,25 +32,57 @@ interface BatchPageProps {
 }
 
 export function BatchPage({ productId, onBack, isUserRole = false }: BatchPageProps) {
-  const { items, batches, suppliers, getBatchesByProduct, addBatch, updateBatch, deleteBatch, openBatch } = useStock()
+  const { suppliers } = useStock()
   const { addNotification } = useNotification()
+  const [product, setProduct] = useState<ProductResponse | null>(null)
+  const [batches, setBatches] = useState<Batch[]>([])
+  const [isLoading, setIsLoading] = useState(true)
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false)
   const [selectedBatchForOpening, setSelectedBatchForOpening] = useState<Batch | null>(null)
   const [selectedBatchForUpdate, setSelectedBatchForUpdate] = useState<Batch | null>(null)
   const [updateQuantity, setUpdateQuantity] = useState(0)
+  
+  // Load product and batches from backend on mount and when productId changes
+  useEffect(() => {
+    const loadData = async () => {
+      try {
+        setIsLoading(true)
+        // Load product from backend
+        const productData = await ProductService.getById(productId)
+        setProduct(productData)
+        
+        // Load batches from backend
+        const batchesData = await batchService.getByProduct(productId)
+        setBatches(batchesData)
+      } catch (error) {
+        console.error("Error loading data:", error)
+        addNotification({
+          type: "error",
+          title: "Erreur",
+          message: "Impossible de charger les données",
+        })
+      } finally {
+        setIsLoading(false)
+      }
+    }
 
-  const product = items.find((item) => item.id === productId)
-  const productBatches = useMemo(() => getBatchesByProduct(productId), [productId, batches])
+    loadData()
+  }, [productId, addNotification])
+  const productBatches = useMemo(() => batches, [batches])
 
-  const activeBatches = productBatches.filter((b) => {
-    const expDate = b.isOpened && b.expirationAfterOpening ? b.expirationAfterOpening : b.expirationDate
-    return new Date(expDate) >= new Date()
-  })
+  const activeBatches = useMemo(() => {
+    return productBatches.filter((b) => {
+      const expDate = b.isOpened && b.expirationAfterOpening ? b.expirationAfterOpening : b.expirationDate
+      return new Date(expDate) >= new Date()
+    })
+  }, [productBatches])
 
-  const archivedBatches = productBatches.filter((b) => {
-    const expDate = b.isOpened && b.expirationAfterOpening ? b.expirationAfterOpening : b.expirationDate
-    return new Date(expDate) < new Date()
-  })
+  const archivedBatches = useMemo(() => {
+    return productBatches.filter((b) => {
+      const expDate = b.isOpened && b.expirationAfterOpening ? b.expirationAfterOpening : b.expirationDate
+      return new Date(expDate) < new Date()
+    })
+  }, [productBatches])
 
   const totalQuantity = activeBatches.reduce((sum, batch) => sum + batch.quantity, 0)
 
@@ -81,7 +116,21 @@ export function BatchPage({ productId, onBack, isUserRole = false }: BatchPagePr
     )
   }
 
-  const handleAddBatch = () => {
+  if (isLoading) {
+    return (
+      <div className="space-y-6">
+        <Button variant="ghost" onClick={onBack}>
+          <ArrowLeftIcon className="mr-2 h-4 w-4" />
+          Retour
+        </Button>
+        <div className="flex items-center justify-center py-12">
+          <p className="text-muted-foreground">Chargement des lots...</p>
+        </div>
+      </div>
+    )
+  }
+
+  const handleAddBatch = async () => {
     if (!newBatch.batchNumber || !newBatch.quantity || !newBatch.expirationDate) {
       addNotification({
         type: "error",
@@ -91,60 +140,108 @@ export function BatchPage({ productId, onBack, isUserRole = false }: BatchPagePr
       return
     }
 
-    addBatch({
-      productId,
-      supplierId: newBatch.supplierId || undefined,
-      batchNumber: newBatch.batchNumber,
-      quantity: newBatch.quantity,
-      receptionDate: newBatch.receptionDate,
-      productionDate: newBatch.productionDate || undefined,
-      expirationDate: newBatch.expirationDate,
-      isOpened: false,
-      notes: newBatch.notes || undefined,
-    })
+    try {
+      await batchService.create({
+        productId,
+        supplierId: newBatch.supplierId || undefined,
+        batchNumber: newBatch.batchNumber,
+        quantity: newBatch.quantity,
+        receptionDate: newBatch.receptionDate,
+        productionDate: newBatch.productionDate || undefined,
+        expirationDate: newBatch.expirationDate,
+        notes: newBatch.notes || undefined,
+      })
 
-    addNotification({
-      type: "success",
-      title: "Lot ajouté",
-      message: `Le lot ${newBatch.batchNumber} a été ajouté avec succès`,
-    })
+      // Reload batches from backend
+      const updatedBatches = await batchService.getByProduct(productId)
+      setBatches(updatedBatches)
 
-    setIsAddDialogOpen(false)
-    setNewBatch({
-      batchNumber: "",
-      quantity: 0,
-      supplierId: "",
-      receptionDate: new Date().toISOString().split("T")[0],
-      productionDate: "",
-      expirationDate: "",
-      notes: "",
-    })
-  }
-
-  const handleOpenBatch = () => {
-    if (!selectedBatchForOpening) return
-
-    openBatch(selectedBatchForOpening.id, openingDate)
-    addNotification({
-      type: "success",
-      title: "Lot ouvert",
-      message: `Le lot ${selectedBatchForOpening.batchNumber} a été ouvert`,
-    })
-    setSelectedBatchForOpening(null)
-  }
-
-  const handleDeleteBatch = (batch: Batch) => {
-    if (confirm(`Êtes-vous sûr de vouloir supprimer le lot ${batch.batchNumber} ?`)) {
-      deleteBatch(batch.id)
       addNotification({
         type: "success",
-        title: "Lot supprimé",
-        message: `Le lot ${batch.batchNumber} a été supprimé`,
+        title: "Lot ajouté",
+        message: `Le lot ${newBatch.batchNumber} a été ajouté avec succès`,
+      })
+
+      setIsAddDialogOpen(false)
+      setNewBatch({
+        batchNumber: "",
+        quantity: 0,
+        supplierId: "",
+        receptionDate: new Date().toISOString().split("T")[0],
+        productionDate: "",
+        expirationDate: "",
+        notes: "",
+      })
+    } catch (error) {
+      console.error("Error adding batch:", error)
+      addNotification({
+        type: "error",
+        title: "Erreur",
+        message: "Impossible d'ajouter le lot",
       })
     }
   }
 
-  const handleUpdateQuantity = () => {
+  const handleOpenBatch = async () => {
+    if (!selectedBatchForOpening) return
+
+    try {
+      const expirationAfterOpening = new Date(openingDate)
+      if (product?.data.shelfLifeAfterOpening) {
+        expirationAfterOpening.setDate(expirationAfterOpening.getDate() + product.data.shelfLifeAfterOpening)
+      }
+
+      await batchService.open(selectedBatchForOpening.id, {
+        openingDate,
+        expirationAfterOpening: expirationAfterOpening.toISOString().split("T")[0],
+      })
+
+      // Reload batches from backend
+      const updatedBatches = await batchService.getByProduct(productId)
+      setBatches(updatedBatches)
+
+      addNotification({
+        type: "success",
+        title: "Lot ouvert",
+        message: `Le lot ${selectedBatchForOpening.batchNumber} a été ouvert`,
+      })
+      setSelectedBatchForOpening(null)
+    } catch (error) {
+      console.error("Error opening batch:", error)
+      addNotification({
+        type: "error",
+        title: "Erreur",
+        message: "Impossible d'ouvrir le lot",
+      })
+    }
+  }
+
+  const handleDeleteBatch = async (batch: Batch) => {
+    if (confirm(`Êtes-vous sûr de vouloir supprimer le lot ${batch.batchNumber} ?`)) {
+      try {
+        await batchService.delete(batch.id)
+
+        // Reload batches from backend
+        const updatedBatches = await batchService.getByProduct(productId)
+        setBatches(updatedBatches)
+
+        addNotification({
+          type: "success",
+          title: "Lot supprimé",
+          message: `Le lot ${batch.batchNumber} a été supprimé`,
+        })
+      } catch (error) {
+        console.error("Error deleting batch:", error)
+        addNotification({
+          type: "error",
+          title: "Erreur",
+          message: "Impossible de supprimer le lot",
+        })
+      }
+    }
+  }
+
+  const handleUpdateQuantity = async () => {
     if (!selectedBatchForUpdate) return
 
     if (updateQuantity < 0) {
@@ -156,13 +253,29 @@ export function BatchPage({ productId, onBack, isUserRole = false }: BatchPagePr
       return
     }
 
-    updateBatch(selectedBatchForUpdate.id, { quantity: updateQuantity })
-    addNotification({
-      type: "success",
-      title: "Quantité mise à jour",
-      message: `La quantité du lot ${selectedBatchForUpdate.batchNumber} a été mise à jour`,
-    })
-    setSelectedBatchForUpdate(null)
+    try {
+      await batchService.update(selectedBatchForUpdate.id, {
+        quantity: updateQuantity,
+      })
+
+      // Reload batches from backend
+      const updatedBatches = await batchService.getByProduct(productId)
+      setBatches(updatedBatches)
+
+      addNotification({
+        type: "success",
+        title: "Quantité mise à jour",
+        message: `La quantité du lot ${selectedBatchForUpdate.batchNumber} a été mise à jour`,
+      })
+      setSelectedBatchForUpdate(null)
+    } catch (error) {
+      console.error("Error updating batch quantity:", error)
+      addNotification({
+        type: "error",
+        title: "Erreur",
+        message: "Impossible de mettre à jour la quantité",
+      })
+    }
   }
 
   const getDaysUntilExpiration = (batch: Batch) => {
@@ -200,7 +313,7 @@ export function BatchPage({ productId, onBack, isUserRole = false }: BatchPagePr
       </div>
 
       <div>
-        <h2 className="text-balance text-3xl font-semibold text-foreground">Gestion des Lots - {product.name}</h2>
+        <h2 className="text-balance text-3xl font-semibold text-foreground">Gestion des Lots - {product.data.name}</h2>
         <p className="text-pretty text-sm text-muted-foreground">
           Système FIFO avec traçabilité complète et gestion des dates d'ouverture
         </p>
@@ -211,7 +324,7 @@ export function BatchPage({ productId, onBack, isUserRole = false }: BatchPagePr
           <div className="space-y-2">
             <p className="text-sm font-medium text-muted-foreground">Quantité totale</p>
             <p className="text-3xl font-bold text-foreground">
-              {totalQuantity} {product.unit}
+              {totalQuantity} {product.data.unit}
             </p>
           </div>
         </Card>
@@ -225,7 +338,7 @@ export function BatchPage({ productId, onBack, isUserRole = false }: BatchPagePr
           <div className="space-y-2">
             <p className="text-sm font-medium text-muted-foreground">Conservation après ouverture</p>
             <p className="text-3xl font-bold text-foreground">
-              {product.shelfLifeAfterOpening ? `${product.shelfLifeAfterOpening}j` : "Non défini"}
+              {product.data.shelfLifeAfterOpening ? `${product.data.shelfLifeAfterOpening}j` : "Non défini"}
             </p>
           </div>
         </Card>
@@ -292,7 +405,7 @@ export function BatchPage({ productId, onBack, isUserRole = false }: BatchPagePr
                       <div>
                         <span className="text-muted-foreground">Quantité:</span>
                         <span className="ml-2 font-medium text-foreground">
-                          {batch.quantity} {product.unit}
+                          {batch.quantity} {product.data.unit}
                         </span>
                       </div>
                       <div>
@@ -404,7 +517,7 @@ export function BatchPage({ productId, onBack, isUserRole = false }: BatchPagePr
                       <div>
                         <span className="text-muted-foreground">Quantité:</span>
                         <span className="ml-2 font-medium text-foreground">
-                          {batch.quantity} {product.unit}
+                          {batch.quantity} {product.data.unit}
                         </span>
                       </div>
                       <div>
@@ -578,15 +691,15 @@ export function BatchPage({ productId, onBack, isUserRole = false }: BatchPagePr
                 />
               </div>
 
-              {product.shelfLifeAfterOpening && (
+              {product.data.shelfLifeAfterOpening && (
                 <div className="rounded-md bg-primary/10 p-4 text-sm">
                   <p className="font-medium text-foreground">
-                    Durée de conservation après ouverture: {product.shelfLifeAfterOpening} jours
+                    Durée de conservation après ouverture: {product.data.shelfLifeAfterOpening} jours
                   </p>
                   <p className="mt-1 text-muted-foreground">
                     Nouvelle DLC:{" "}
                     {new Date(
-                      new Date(openingDate).getTime() + product.shelfLifeAfterOpening * 24 * 60 * 60 * 1000,
+                      new Date(openingDate).getTime() + product.data.shelfLifeAfterOpening * 24 * 60 * 60 * 1000,
                     ).toLocaleDateString("fr-FR")}
                   </p>
                 </div>
@@ -615,7 +728,7 @@ export function BatchPage({ productId, onBack, isUserRole = false }: BatchPagePr
             <div className="space-y-4">
               <div className="space-y-2">
                 <Label htmlFor="updateQuantity">
-                  Nouvelle quantité ({product?.unit}) <span className="text-destructive">*</span>
+                  Nouvelle quantité ({product?.data.unit}) <span className="text-destructive">*</span>
                 </Label>
                 <Input
                   id="updateQuantity"
@@ -628,7 +741,7 @@ export function BatchPage({ productId, onBack, isUserRole = false }: BatchPagePr
 
               <div className="rounded-lg bg-amber-50 p-3 text-sm dark:bg-amber-950/20">
                 <p className="text-amber-900 dark:text-amber-100">
-                  Quantité actuelle: {selectedBatchForUpdate?.quantity} {product?.unit}
+                  Quantité actuelle: {selectedBatchForUpdate?.quantity} {product?.data.unit}
                 </p>
               </div>
 
